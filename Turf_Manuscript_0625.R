@@ -1,16 +1,18 @@
-# Manuscript Code (cleaning, descriptive, model dataset creation) JYB 11/3/24
-# Edited by ZB and JYB 6/12/25
+# Manuscript Code (cleaning, descriptive, model dataset creation, analysis) JYB 11/3/24
+# Edited by ZB and JYB 6/12/25 through 10/27/26
 
 # Install and load necessary packages
-pacman::p_load(tidyverse, scales, cowplot, styler, here,  table1, emmeans,haven, glmm, gt, lme4, merTools, purrr, reshape2, knitr, kableExtra)
+pacman::p_load(tidyverse, scales, cowplot, styler, here,  table1, emmeans,haven, glmm, gt, lme4, merTools, purrr, reshape2, knitr, kableExtra, table1)
 
+
+### RAW DATA IMPORT, CLEANING, AND MANIPULATION ###
 
 # Injury dataset for 2018-23
-nfl_injs <- read.csv("FO_injuries.csv") |>
+nfl_injs <- read.csv("../FO_injuries.csv") |>
   filter(Year >= 2018)
 
 # Games and turf data for 2018-23
-games <- read.csv("Game_Data_Rev.csv") |>
+games <- read.csv("./Game_Data_Rev.csv") |>
   filter(Year >= 2018) |>
   # Drop unnecessary variable
   dplyr::select(-Rk)
@@ -103,28 +105,32 @@ nfl_injs_le <- nfl_injs |>
 
     # Restrict to lower extremity injuries
     INJURY_LOCATION_1 %in% c("Groin", "Knee", "Ankle", "Achilles", "Thigh", "Foot", "Hip", "Hamstring", "Quadriceps", "Leg", "Calf", "Buttocks"),
-    
-    # To run 3-level model for foot and ankle injuries only, comment out the preceding line
-    # and use the line below instead
-    # INJURY_LOCATION_1 %in% c("Ankle", "Foot"),
+  
     
     # Restrict to injuries resulting in at least one missed game
     gmissed != 0
   )
 
-# Summarize counts of LE injuries that occurred for each team for each week of each season
+# Summarize counts of LE injuries and only foot and ankle injuries that occurred for each team for each week of each season
 # Team-games without any injuries will not appear in this dataset
 inj_mod <- nfl_injs_le |>
   group_by(Team, wk_occur, Year) |>
   summarize(n_injs = n())
 
+inj_mod_footankle <- nfl_injs_le |>
+  filter(INJURY_LOCATION_1 %in% c("Foot", "Ankle")) |>
+  group_by(Team, wk_occur, Year) |>
+  summarize(n_injs_footankle = n())
+
 # Join count of LE injuries to the game and surface data
 model_data_final <- games |>
   left_join(inj_mod, by = c("Tm" = "Team", "Year" = "Year", "Week" = "wk_occur")) |>
+  left_join(inj_mod_footankle, by = c("Tm" = "Team", "Year" = "Year", "Week" = "wk_occur")) |>
   # If nothing was joined it means there were no injuries; set to 0
-  mutate(n_injs = coalesce(n_injs, 0))
+  mutate(n_injs = coalesce(n_injs, 0),
+         n_injs_footankle = coalesce(n_injs_footankle, 0))
 
-rm(inj_mod)
+rm(inj_mod, inj_mod_footankle)
 
 # Add a new variable splitting out natural grass types
 model_data_final <- model_data_final |>
@@ -144,25 +150,29 @@ model_data_final$TeamYear <- paste(model_data_final$Tm, model_data_final$Year)
 
 
 
-# Create descriptive tables for game turfs and injuries
-
-library(table1)
-
-# Create labels
-label(nfl_injs_le$INJURY_LOCATION_1) <- "Injury Location"
-label(nfl_injs_le$side) <- "Offense vs. Defense vs. Special Teams"
-label(nfl_injs_le$wk_occur) <- "Week Occurred"
-label(nfl_injs_le$gmissed) <- "Games Missed"
-
-# Create inj table
-inj_table <- table1(~ INJURY_LOCATION_1 + side + wk_occur + gmissed,
-  data = nfl_injs_le,
-  caption = "Injury Characteristics"
-)
-
-inj_table
+### ANALYSIS CODE ###
 
 
+#Table 1 - Injury Characteristics
+# NOTE: This code section will not run without the raw injury data,
+# available on request as noted in the README.
+  # Create labels
+  label(nfl_injs_le$INJURY_LOCATION_1) <- "Injury Location"
+  label(nfl_injs_le$side) <- "Offense vs. Defense vs. Special Teams"
+  label(nfl_injs_le$wk_occur) <- "Week Occurred"
+  label(nfl_injs_le$gmissed) <- "Games Missed"
+  
+  # Create inj table
+  inj_table <- table1(~ INJURY_LOCATION_1 + side + wk_occur + gmissed,
+    data = nfl_injs_le,
+    caption = "Injury Characteristics"
+  )
+  
+  inj_table
+# NOTE: End of code requiring raw injury data.
+  
+  
+# Table 2 - Distribution of Game Surfaces
 label(games$Surface_detailed) <- "Detailed Surface Type"
 label(games$Surface_3cat) <- "3-Level Surface Type"
 
@@ -188,9 +198,9 @@ model_data_final <- model_data_final %>%
          Surface_detailed = fct_relevel(Surface_detailed, "Natural Grass"))
 
 
-# Table Steps 
-# 3 cat
-## 3 cat crude
+
+# 3-category Surface Table and Plot
+  ## Table of crude rates
 
   injs_3cat <- model_data_final |>
     group_by(Surface_3cat) |> # Numerators
@@ -208,7 +218,7 @@ model_data_final <- model_data_final %>%
       rate_ul = (inj + 1.96 * sqrt(inj)) / tg
     )
   
-  # 3 category model:
+  # 3-category model:
   m3cat <- glmer(
     n_injs ~ 1 + Surface_3cat +
       (1 | TeamYear) + (1 | Stadium),
@@ -216,8 +226,7 @@ model_data_final <- model_data_final %>%
   )
   summary(m3cat)
   exp(fixef(m3cat))
-  confint(m3cat, method = "Wald")
-  #confint(m3cat)
+  exp(confint(m3cat, method = "Wald"))
   
   model_means <- emmeans(m3cat, ~Surface_3cat, type = "response")
   cat_mod_sum <- as.data.frame(summary(model_means)) |>
@@ -229,42 +238,42 @@ model_data_final <- model_data_final %>%
     rename(crude_rate = rate) |>
     left_join(cat_mod_sum, by = "Surface_3cat")
   
-    # 3 cat table 
-  cat_table |>
-    mutate(
-      `Crude Rate (95% CI)` = paste0(
-        sprintf("%.2f", crude_rate),
-        " (", sprintf("%.2f", rate_ll),
-        "–", sprintf("%.2f", rate_ul), ")"
-      ),
-      `Model Rate (95% CI)` = paste0(
-        sprintf("%.2f", mod_rate),
-        " (", sprintf("%.2f", model_ll),
-        "–", sprintf("%.2f", model_ul), ")"
-      )
-    ) |>
-    dplyr::select(Surface_3cat, `Crude Rate (95% CI)`, `Model Rate (95% CI)`) |>
-    gt() |>
-    tab_header(
-      title = "Injury Rates by Three Category Surface Type",
-      subtitle = "Crude and model-adjusted rates per team game"
-    ) |>
-    cols_label(
-      Surface_3cat = "Surface Type",
-      `Crude Rate (95% CI)` = "Crude Injury Rate (95% CI)",
-      `Model Rate (95% CI)` = "Model-Adjusted Injury Rate (95% CI)"
-    ) |>
-    cols_align(
-      align = "center",
-      columns = c(`Crude Rate (95% CI)`, `Model Rate (95% CI)`)
-    ) |>
-    tab_footnote(
-      footnote = "Rates represent injuries per game. Model adjusted for team-year and stadium random effects."
-    ) |>
-    tab_options(
-      table.font.size = 12,
-      heading.title.font.size = 14
-    )
+  #   # 3 cat table - DID NOT USE IN MANUSCRIPT
+  # cat_table |>
+  #   mutate(
+  #     `Crude Rate (95% CI)` = paste0(
+  #       sprintf("%.2f", crude_rate),
+  #       " (", sprintf("%.2f", rate_ll),
+  #       "–", sprintf("%.2f", rate_ul), ")"
+  #     ),
+  #     `Model Rate (95% CI)` = paste0(
+  #       sprintf("%.2f", mod_rate),
+  #       " (", sprintf("%.2f", model_ll),
+  #       "–", sprintf("%.2f", model_ul), ")"
+  #     )
+  #   ) |>
+  #   dplyr::select(Surface_3cat, `Crude Rate (95% CI)`, `Model Rate (95% CI)`) |>
+  #   gt() |>
+  #   tab_header(
+  #     title = "Injury Rates by Three Category Surface Type",
+  #     subtitle = "Crude and model-adjusted rates per team game"
+  #   ) |>
+  #   cols_label(
+  #     Surface_3cat = "Surface Type",
+  #     `Crude Rate (95% CI)` = "Crude Injury Rate (95% CI)",
+  #     `Model Rate (95% CI)` = "Model-Adjusted Injury Rate (95% CI)"
+  #   ) |>
+  #   cols_align(
+  #     align = "center",
+  #     columns = c(`Crude Rate (95% CI)`, `Model Rate (95% CI)`)
+  #   ) |>
+  #   tab_footnote(
+  #     footnote = "Rates represent injuries per game. Model adjusted for team-year and stadium random effects."
+  #   ) |>
+  #   tab_options(
+  #     table.font.size = 12,
+  #     heading.title.font.size = 14
+  #   )
 
   # 3-category plot
   
@@ -279,12 +288,61 @@ model_data_final <- model_data_final %>%
     theme(legend.position = "none") +
     coord_flip()
   
-    
 
-
-# detailed table creation
   
   
+  
+  
+  
+# 3-category Surface Table, Foot and Ankle Only
+  ## Table of crude rates
+  
+  injs_3cat <- model_data_final |>
+    group_by(Surface_3cat) |> # Numerators
+    summarize(inj = sum(n_injs_footankle))
+  #
+  tempstad_3cat <- games |>
+    group_by(Surface_3cat) |>
+    summarize(tg = n())
+  #
+  ir_table_3cat <- injs_3cat |>
+    left_join(tempstad_3cat, by = "Surface_3cat") |>
+    mutate(
+      rate = inj / tg,
+      rate_ll = (inj - 1.96 * sqrt(inj)) / tg,
+      rate_ul = (inj + 1.96 * sqrt(inj)) / tg
+    )
+  
+  # 3-category model:
+  m3cat <- glmer(
+    n_injs_footankle ~ 1 + Surface_3cat +
+      (1 | TeamYear) + (1 | Stadium),
+    data = model_data_final, family = poisson(link = "log")
+  )
+  summary(m3cat)
+  exp(fixef(m3cat))
+  exp(confint(m3cat, method = "Wald"))
+  
+  model_means <- emmeans(m3cat, ~Surface_3cat, type = "response")
+  cat_mod_sum <- as.data.frame(summary(model_means)) |>
+    rename(model_ll = asymp.LCL, model_ul = asymp.UCL, mod_rate = rate) |>
+    dplyr::select(-SE, -df)
+  cat_table <- ir_table_3cat |>
+    filter(!is.na(Surface_3cat)) |>
+    dplyr::select(-inj, -tg) |>
+    rename(crude_rate = rate) |>
+    left_join(cat_mod_sum, by = "Surface_3cat")
+
+
+
+  
+  
+  
+  
+  
+# Detailed Category Surface Table and Plot
+  
+  ## Table of crude rates
   injs_det <- model_data_final |>
     group_by(Surface_detailed) |> # Numerators
     summarize(inj = sum(n_injs))
@@ -300,6 +358,8 @@ model_data_final <- model_data_final %>%
       rate_ll = (inj - 1.96 * sqrt(inj)) / tg,
       rate_ul = (inj + 1.96 * sqrt(inj)) / tg
     )
+  
+  ## Detailed category model
   set.seed(05282025)
   
   mod_all <- glmer(
@@ -314,8 +374,7 @@ model_data_final <- model_data_final %>%
   )
   
   summary(mod_all)
-  confint(mod_all, method = "Wald")
-  confint(mod_all)
+  exp(confint(mod_all, method = "Wald"))
   
   model_means <- emmeans(mod_all, ~Surface_detailed, type = "response")
   mod_sum <- as.data.frame(summary(model_means)) |>
@@ -327,42 +386,42 @@ model_data_final <- model_data_final %>%
     rename(crude_rate = rate) |>
     left_join(mod_sum, by = "Surface_detailed")
   
-  
-  det_table |>
-    mutate(
-      `Crude Rate (95% CI)` = paste0(
-        sprintf("%.2f", crude_rate),
-        " (", sprintf("%.2f", rate_ll),
-        "–", sprintf("%.2f", rate_ul), ")"
-      ),
-      `Model Rate (95% CI)` = paste0(
-        sprintf("%.2f", mod_rate),
-        " (", sprintf("%.2f", model_ll),
-        "–", sprintf("%.2f", model_ul), ")"
-      )
-    ) |>
-    dplyr::select(Surface_detailed, `Crude Rate (95% CI)`, `Model Rate (95% CI)`) |>
-    gt() |>
-    tab_header(
-      title = "Injury Rates by Detailed Surface Type",
-      subtitle = "Crude and model-adjusted rates per team game"
-    ) |>
-    cols_label(
-      Surface_detailed = "Surface Type",
-      `Crude Rate (95% CI)` = "Crude Injury Rate (95% CI)",
-      `Model Rate (95% CI)` = "Model-Adjusted Injury Rate (95% CI)"
-    ) |>
-    cols_align(
-      align = "center",
-      columns = c(`Crude Rate (95% CI)`, `Model Rate (95% CI)`)
-    ) |>
-    tab_footnote(
-      footnote = "Rates represent injuries per game. Model adjusted for team-year and stadium random effects."
-    ) |>
-    tab_options(
-      table.font.size = 12,
-      heading.title.font.size = 14
-    )
+  # # Detailed category table - DID NOT USE IN MANUSCRIPT
+  # det_table |>
+  #   mutate(
+  #     `Crude Rate (95% CI)` = paste0(
+  #       sprintf("%.2f", crude_rate),
+  #       " (", sprintf("%.2f", rate_ll),
+  #       "–", sprintf("%.2f", rate_ul), ")"
+  #     ),
+  #     `Model Rate (95% CI)` = paste0(
+  #       sprintf("%.2f", mod_rate),
+  #       " (", sprintf("%.2f", model_ll),
+  #       "–", sprintf("%.2f", model_ul), ")"
+  #     )
+  #   ) |>
+  #   dplyr::select(Surface_detailed, `Crude Rate (95% CI)`, `Model Rate (95% CI)`) |>
+  #   gt() |>
+  #   tab_header(
+  #     title = "Injury Rates by Detailed Surface Type",
+  #     subtitle = "Crude and model-adjusted rates per team game"
+  #   ) |>
+  #   cols_label(
+  #     Surface_detailed = "Surface Type",
+  #     `Crude Rate (95% CI)` = "Crude Injury Rate (95% CI)",
+  #     `Model Rate (95% CI)` = "Model-Adjusted Injury Rate (95% CI)"
+  #   ) |>
+  #   cols_align(
+  #     align = "center",
+  #     columns = c(`Crude Rate (95% CI)`, `Model Rate (95% CI)`)
+  #   ) |>
+  #   tab_footnote(
+  #     footnote = "Rates represent injuries per game. Model adjusted for team-year and stadium random effects."
+  #   ) |>
+  #   tab_options(
+  #     table.font.size = 12,
+  #     heading.title.font.size = 14
+  #   )
   
   # Detailed category plot
   
@@ -384,7 +443,7 @@ model_data_final <- model_data_final %>%
   
   
   
-  # 2-category model for plot by year
+# 2-category model for plot by year
   
   annual_plot_list <- list()
   
