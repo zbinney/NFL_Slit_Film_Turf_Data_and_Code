@@ -3,7 +3,7 @@ Data and code for the paper "Association of Slit-Film and Other Artificial Turf 
 
 The main analysis code file is `Turf_Manuscript_0625.R`.
 
-The main data file is `model_data_final.csv`. It contains data on the surface for each NFL regular season game from 2018-23 and a count of lower extremity injuries in each game, among other variables. A data dictionary is forthcoming, but the analysis code file will give you an idea of what certain variables mean.
+The main data file is `model_data_final.csv`. It contains data on the surface for each NFL regular season game from 2018-23 and a count of lower extremity injuries in each game, among other variables. We have also provided a data dictionary.
 
 The raw injury data used to populate the `n_injs` and `n_injs_footankle` columns in `model_data_final.csv` is commercially protected. For access consideration, please email Dr. Binney at zbinney at emory dot edu. We expect to be able to provide access for fuller replication attempts but cannot offer the data publicly.
 
